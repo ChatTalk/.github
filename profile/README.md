@@ -1,6 +1,6 @@
 <h1 align="center"> ChatTalk </h1> <br>
 <p align="center">
-  <a href="https://gitpoint.co/">
+  <a href="https://github.com/orgs/ChatTalk/repositories">
     <img width="70%" src="https://github.com/user-attachments/assets/bdcd934e-848a-4b8c-93ad-70dc44c9f225" alt="ChatTalk">
   </a>
 </p>
