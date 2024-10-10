@@ -14,8 +14,8 @@
     벨로그 개발일지
   </a>
 <br>
-  <a href="">
-    시연 영상(곧 업데이트 예정)
+  <a href="https://www.youtube.com/watch?v=FZV4JvbwLrQ">
+    시연 영상(1차)
   </a>
 <br>
   <a href="">
