@@ -74,7 +74,7 @@ HTTP, WebSocket 프로토콜에서의 로직 구현 및 MSA 기반 인프라 구
 
 ### 1. 채팅 실시간 메세징 기능
 
-<img src="https://github.com/user-attachments/assets/0cbf1d9b-0911-4c52-8adf-e3b9743bcf9a" alt="message" width="350" height="400" align="center"/> 
+<img src="https://github.com/user-attachments/assets/0cbf1d9b-0911-4c52-8adf-e3b9743bcf9a" alt="message" width="380" height="400" align="center"/> 
 
 <br />
 <br />
@@ -87,7 +87,7 @@ HTTP, WebSocket 프로토콜에서의 로직 구현 및 MSA 기반 인프라 구
 
 ### 2. 채팅 참여자 현황 표시 기능
 
-<img src="https://github.com/user-attachments/assets/c73a17d6-be30-48dd-93c2-fe0753abaae1" alt="participant" width="380" height="400" align="center"/> 
+<img src="https://github.com/user-attachments/assets/c73a17d6-be30-48dd-93c2-fe0753abaae1" alt="participant" width="400" height="400" align="center"/> 
 
 <br />
 <br />
@@ -100,7 +100,7 @@ HTTP, WebSocket 프로토콜에서의 로직 구현 및 MSA 기반 인프라 구
 
 ### 3. 미접속 채팅 메세지 보관 출력 기능
 
-<img src="https://github.com/user-attachments/assets/48540252-9268-4ed0-9094-7fc63943c976" alt="save" width="600" height="400" align="center"/> 
+<img src="https://github.com/user-attachments/assets/5664d4b4-6f0b-485c-b61b-8ded44de1b93" alt="save" width="580" height="400" align="center"/> 
 
 <br />
 <br />
@@ -113,7 +113,29 @@ HTTP, WebSocket 프로토콜에서의 로직 구현 및 MSA 기반 인프라 구
 
 ## 🛠️ Skills
 
-프론트엔드: 타입스크립트, 리액트, 리덕스, 스타일드 컴포넌트, Axios<br />
-백엔드: 자바 17, 스프링 부트, 스프링 시큐리티, 스프링 JPA, 스프링 클라우드 API Gateway, Eureka, Config, Redis, Kafka, MongoDB, PostgreSQL
 
+### 🔧 BackEnd
 
+<p>
+  <img src="https://img.shields.io/badge/Java-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white" />
+  <img src="https://img.shields.io/badge/SpringBoot-6DB33F?style=for-the-badge&logo=Spring&logoColor=white" />
+  <img src="https://img.shields.io/badge/Spring Data JPA-6DB33F?style=for-the-badge&logo=spring&logoColor=white" />
+  <img src="https://img.shields.io/badge/Spring Cloud-6DB33F?style=for-the-badge&logo=spring&logoColor=white" />
+  <img src="https://img.shields.io/badge/Spring%20Security-6DB33F?style=for-the-badge&logo=springsecurity&logoColor=white" /> <br />
+  <img src ="https://img.shields.io/badge/postgresql-4169e1?style=for-the-badge&logo=postgresql&logoColor=white" />
+  <img src="https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white" />
+  <img src="https://img.shields.io/badge/Apache_Kafka-231F20?style=for-the-badge&logo=apache-kafka&logoColor=white" />
+  <img src="https://img.shields.io/badge/-MongoDB-13aa52?style=for-the-badge&logo=mongodb&logoColor=white" />
+  <img src="https://img.shields.io/badge/docker-257bd6?style=for-the-badge&logo=docker&logoColor=white" />
+</p>
+
+### 🖥️ FrontEnd
+
+<p>
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" />
+  <img src="https://img.shields.io/badge/-ReactJs-61DAFB?logo=react&logoColor=white&style=for-the-badge" />
+  <img src="https://img.shields.io/badge/-Redux-purple?style=for-the-badge&logo=redux" />
+  <img src="https://img.shields.io/badge/axios-854195?style=for-the-badge&logo=axios&logoColor=5A29E4" />
+  <img src ="https://img.shields.io/badge/Styled_Components-DB7093?style=for-the-badge&logo=styled-components&logoColor=white" />
+  <img src="https://img.shields.io/badge/Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white" />
+</p>
