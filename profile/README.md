@@ -10,6 +10,24 @@
 
 ---
 
+#### 📖 목차
+
+[1. Introduction](#-introduction) <br/>
+[2. Link](#-link) <br />
+[3. Architecture](#%EF%B8%8F-architecture) <br />
+[4. Features](#-features) <br />
+&nbsp;&nbsp;&nbsp;&nbsp;[1) 채팅 실시간 메세징 기능](#1-채팅-실시간-메세징-기능) <br />
+&nbsp;&nbsp;&nbsp;&nbsp;[2) 채팅 참여자 현황 표시 기능](#2-채팅-참여자-현황-표시-기능) <br />
+&nbsp;&nbsp;&nbsp;&nbsp;[3) 미접속 채팅 메세지 보관 출력 기능](#3-미접속-채팅-메세지-보관-출력-기능) <br />
+[5. Skills](#%EF%B8%8F-skills) <br/>
+&nbsp;&nbsp;&nbsp;&nbsp;[1) BackEnd](#-backend) <br/>
+&nbsp;&nbsp;&nbsp;&nbsp;[2) FrontEnd](#%EF%B8%8F-frontend) <br/>
+[6. Trouble Shooting](#-trouble-shooting) <br/>
+&nbsp;&nbsp;&nbsp;&nbsp;[1) 인증 기능의 관심사 분리에 따른 인증 여부 데이터 송수신 정합성 이슈](#1-인증-기능의-관심사-분리에-따른-인증-여부-데이터-송수신-정합성-이슈) <br/>
+&nbsp;&nbsp;&nbsp;&nbsp;[2) 클라이언트 레벨 구독 종료 & 서버 레벨 구독 유지 상황에서의 채팅 메세지 보존](#2-클라이언트-레벨-구독-종료--서버-레벨-구독-유지-상황에서의-채팅-메세지-보존) <br/>
+&nbsp;&nbsp;&nbsp;&nbsp;[3) 웹소켓 기반 이벤트 트리거와 별개의 웹소켓 구독 시점 어긋남으로 인한 데이터 소실](3-웹소켓-기반-이벤트-트리거와-별개의-웹소켓-구독-시점-어긋남으로-인한-데이터-소실) <br/>
+
+---
 
 ## 📝 Introduction
 
