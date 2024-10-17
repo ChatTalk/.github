@@ -111,6 +111,7 @@ HTTP, WebSocket 프로토콜에서의 로직 구현 및 **MSA** 기반 인프라
 
 
 - 별개의 추가 **WebSocket** 인스턴스로 동작하되, 메세징 인스턴스와 이벤트 기반으로 상호 작용하여 실시간으로 참여자를 관리합니다
+- 참여자의 접속 현황은 **MongoDB**를 통해 채팅방 기준으로 접속자의 접속 여부, 퇴장 시간을 관리합니다
 - 가볍게 처리하고 별개의 기록을 남길 필요가 없기에 **Redis Pub Sub** 메세지브로커로 구현했습니다
 
 <br />
@@ -124,7 +125,7 @@ HTTP, WebSocket 프로토콜에서의 로직 구현 및 **MSA** 기반 인프라
 
 
 - 접속을 끊었지만 서버 내에서 구독을 유지하고 있는 채팅 내에서 이뤄진 메세지를 저장하여 재접속할 때 출력해줍니다
-- 구조적 데이터 관리가 용이하고 실시간 처리가 뛰어난 **MongoDB**를 기반으로 구현했습니다
+- 접속자 관리를 담당하는 MongoDB에서 **GraphQL**을 통해 받아온 퇴장 시간을 바탕으로 **PostgreSQL**에서 조회합니다
 
 <br />
 
@@ -144,6 +145,7 @@ HTTP, WebSocket 프로토콜에서의 로직 구현 및 **MSA** 기반 인프라
   <img src="https://img.shields.io/badge/Apache_Kafka-231F20?style=for-the-badge&logo=apache-kafka&logoColor=white" />
   <img src="https://img.shields.io/badge/-MongoDB-13aa52?style=for-the-badge&logo=mongodb&logoColor=white" />
   <img src="https://img.shields.io/badge/docker-257bd6?style=for-the-badge&logo=docker&logoColor=white" />
+  <img src="https://img.shields.io/badge/GraphQL-E434AA?style=for-the-badge&logo=graphql&logoColor=white" />
 </p>
 
 ### 🖥️ FrontEnd
