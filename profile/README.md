@@ -764,7 +764,6 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> 
 - 프로토콜 간 간섭 방지 목적을 위한 추가적인 조치
 - 문제 해결
 
-
 <p align="center">
   <img width="60%" alt="사용자별 읽지 않은 메세지 중복 처리" src="https://github.com/user-attachments/assets/b933558b-cc18-4f1b-bc9d-408b80ec03b0">
 </p>
@@ -776,6 +775,231 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> 
 ### 4. 웹소켓 구독 이벤트와 레디스 메세지브로커 이벤트 순서 정립을 통한 데이터 소실 방지
 
 #### ❓ 문제 상황
+
+- 채팅 참여자 관리는 참여자 인스턴스에서 별개로 관리하지만, 업데이트 로직은 다른 인스턴스의 이벤트와 연계되어 발생
+- 이벤트의 실시간 트리깅은 참여자 인스턴스로 **Redis Pub Sub**을 통해 레코드로 전파됨
+
+```java
+public record ChatUserReadDTO(String chatId, String email, Boolean read, Boolean leave) {
+}
+```
+
+<p align="center">
+  <img width="60%" alt="사용자별 읽지 않은 메세지 중복 처리" src="https://github.com/user-attachments/assets/98ce5e2a-3811-40e5-843b-cdc18991a7c2">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">메세지 & 참여자 표시 플로우</p>
+</div>
+
 #### ❗ 문제 발생
+
+- 참여자 인스턴스 역시 웹소켓을 활용하기 때문에 **웹소켓의 구독 과정**이 필요함
+- 웹소켓의 구독 이후에, **Redis Pub Sub**으로 전달받은 레코드를 바탕으로 참여자 리스트를 업데이트함
+
+
+<p align="center">
+  <img width="60%" alt="사용자별 읽지 않은 메세지 중복 처리" src="https://github.com/user-attachments/assets/1ed35e6c-1554-4187-9f1b-c376cb7860c1">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">Redis Pub Sub으로 전달이 먼저 이뤄지고 웹소켓 구독이 이뤄지는 순서 역전 문제</p>
+</div>
+
+<p align="center">
+  <img width="60%" alt="사용자별 읽지 않은 메세지 중복 처리" src="https://github.com/user-attachments/assets/5b50238a-26e4-4039-b99b-1148387d139f">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">이벤트 처리 순서의 보장이 이뤄지지 않음으로 인한 참여자 데이터 손실</p>
+</div>
+
+- 위의 순서가 기본 전제로 이뤄진 후, 참여자 리스트를 클라이언트로 내보내줘야 하는 것이 참여자 표시 기능의 순서
+- 전술한 이벤트 처리 순서가 보장되지 않으면서 참여자 리스트 손실 발생
+
 #### 💬 문제 파악
+
+- **웹소켓 구독** 이벤트와 Redis Pub Sub을 통한 **데이터 수신** 이벤트는 비동기적으로 처리됨
+- MSA 내의 여러 인스턴스 간에 발생하는 이벤트를 순차적으로 처리하는 과정이 포함되어야 함
+- Kafka, RabbitMQ, AWS SQS 등을 통해 구현할 수 있음
+
+<p align="center">
+  <img width="60%" alt="사용자별 읽지 않은 메세지 중복 처리" src="https://github.com/user-attachments/assets/667252c4-a9ae-4075-a0ec-dbe2dd61c61c">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">이벤트 큐의 대략적인 흐름</p>
+</div>
+
+- 해당 문제는 서버 레벨에서 발생하는 이벤트 순서 보장 문제
+- 그렇기 때문에 **직접 코드로 이벤트 큐** 구현 결정
+
 #### 💡 문제 해결
+
+- 이벤트 요소의 고유 식별값을 부여한 후, Redis Pub Sub으로부터의 수신 이벤트와 웹소켓 구독 이벤트의 상호간 추적 필요
+- 웹소켓의 구독 완료 여부를 Redis Pub Sub 측에서 파악해야 함과 동시에 구독이 되지 않으면 이벤트 큐로 데이터를 전달해야 함
+- 웹소켓 구독은 서버 레벨에서 이뤄지고, 데이터 수신은 곧 클라이언트로의 데이터 송신이므로 클라이언트 레벨에서 이뤄짐
+- 각각의 고유 식별값은 **세션 ID**와 **채팅방 ID**로 지정
+
+```java
+@Slf4j(topic = "WEBSOCKET_EVENT_LISTENING")
+@Controller
+@RequiredArgsConstructor
+public class WebSocketEventListener {
+
+    private final EventQueueService eventQueueService;
+
+    @EventListener
+    public void handleWebSocketSubscribeEvent(SessionSubscribeEvent event) throws HttpResponseException {
+        StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
+        String destination = accessor.getDestination();
+        String sessionId = accessor.getSessionId();
+
+        if (destination == null || !destination.startsWith("/sub/participant/")) {
+            throw new HttpResponseException(
+                    HttpStatus.SC_SERVICE_UNAVAILABLE,
+                    "Server Error, 구독 경로 확인 필요"
+            );
+        }
+
+        log.info("구독 시점의 세션 아이디: {}", sessionId);
+
+        String id = destination.replaceFirst("/sub/participant/", "");
+        log.info("구독할 때의 경로 아이디 갖고오기: {}", id);
+
+        // ...
+```
+
+- 구독이 이뤄질 때 발생하는 `SessionSubscribeEvent`를 `StompHeaderAccessor`로 감싸서 구독 경로를 추출
+- 이벤트 객체에서 세션 ID, 구독 경로에서 채팅방 ID를 추출 후, map 자료구조로 둘을 매핑시킴
+
+```java
+@Slf4j(topic = "QUEUE_SERVICE")
+@Component
+@RequiredArgsConstructor
+public class EventQueueService {
+
+    private final Map<String, String> sessionIdChannelMap = new ConcurrentHashMap<>();
+    private final Map<String, Boolean> subscriptionFlags = new ConcurrentHashMap<>();
+    private final Map<String, Queue<List<UserReadDTO>>> messageQueue = new ConcurrentHashMap<>();
+    private final SimpMessageSendingOperations messagingTemplate;
+
+    // 세션 아이디 - 채널 저장
+    public void setSessionIdChannelMap(String sessionId, String chatId) {
+        sessionIdChannelMap.put(sessionId, chatId);
+    }
+
+    // ...
+```
+
+- 이벤트 큐의 필드로 `ConcurrentHashMap` 구조를 채택, 객체 공유 현상 방지
+- 이를 통해 채팅방 ID를 통해서 현재 세션이 구독 상태인지, 종료 상태인지를 Redis Pub Sub 관련 코드에서도 추적 가능
+
+```java
+@Slf4j
+@RequiredArgsConstructor
+@Service
+public class RedisMessageListenerService implements MessageListener {
+
+    private final EventQueueService eventQueueService;
+    private final SimpMessageSendingOperations messagingTemplate;
+
+    // ...
+
+    @Override
+    public void onMessage(Message message, byte[] pattern) {
+        String channel = new String(message.getChannel());
+        String id = channel.replaceFirst("chat_", "");
+
+        String body = new String(message.getBody());
+
+        log.info("채널 확인: {} // 파싱: {}", channel, id);
+
+        try {
+            // ...
+
+            if (eventQueueService.isSubscriptionComplete(id)) {
+                // 구독 완료 -> 바로 전송
+                log.info("{}번 구독 확인, 송신", id);
+                messagingTemplate.convertAndSend("/sub/participant/" + id, data);
+            } else {
+                // 구독 미완료 -> 대기열에 저장
+                log.info("{}번 구독 미완료, 데이터 대기열에 저장: {}", id, data);
+                eventQueueService.enqueueMessage(id, data);
+            }
+```
+``` java
+@Slf4j(topic = "QUEUE_SERVICE")
+@Component
+@RequiredArgsConstructor
+public class EventQueueService {
+
+    private final Map<String, String> sessionIdChannelMap = new ConcurrentHashMap<>();
+    private final Map<String, Boolean> subscriptionFlags = new ConcurrentHashMap<>();
+    private final Map<String, Queue<List<UserReadDTO>>> messageQueue = new ConcurrentHashMap<>();
+    private final SimpMessageSendingOperations messagingTemplate;
+
+    // 세션 아이디 - 채널 저장
+    public void setSessionIdChannelMap(String sessionId, String chatId) {
+        sessionIdChannelMap.put(sessionId, chatId);
+    }
+
+    // 세션 아이디 - 채널 및 채널의 플래그, 큐 삭제
+    public void removeAllFields(String sessionId) {
+        String chatId = sessionIdChannelMap.get(sessionId);
+
+        if (chatId == null) {
+            throw new IllegalArgumentException("채팅 아이디가 세션 맵에 저장 안 됨");
+        }
+
+        subscriptionFlags.remove(chatId);
+        messageQueue.remove(chatId);
+        sessionIdChannelMap.remove(sessionId);
+    }
+
+    // 구독 완료 처리
+    public void onSubscriptionComplete(String clientId) {
+        subscriptionFlags.put(clientId, true);
+        flushQueueForClient(clientId);
+    }
+
+    // 구독 완료 여부 확인
+    public boolean isSubscriptionComplete(String clientId) {
+        return subscriptionFlags.getOrDefault(clientId, false);
+    }
+
+    // 대기열에 메시지 저장
+    public void enqueueMessage(String clientId, List<UserReadDTO> message) {
+        messageQueue.computeIfAbsent(clientId, k -> new ConcurrentLinkedQueue<>()).add(message);
+    }
+
+    // 대기열 처리
+    private void flushQueueForClient(String clientId) {
+        log.info("{}번 큐 플러시 과정 돌입", clientId);
+        Queue<List<UserReadDTO>> queue = messageQueue.get(clientId);
+        if (queue != null) {
+            while (!queue.isEmpty()) {
+                log.info("{}번 큐 데이터 산입 확인: {}", clientId, queue.size());
+                List<UserReadDTO> message = queue.poll();
+                // 대기열에 쌓인 메시지를 클라이언트로 전송하는 로직
+                sendMessageToClient(clientId, message);
+                log.info("*** 데이터 송신 완료 ***");
+            }
+        }
+    }
+
+    private void sendMessageToClient(String clientId, List<UserReadDTO> message) {
+        // WebSocket 클라이언트로 메시지를 전송하는 로직
+        log.info("대기열 이후 최종 메세지 송신: {}번", clientId);
+        messagingTemplate.convertAndSend("/sub/participant/" + clientId, message);
+    }
+
+}
+```
+- 구독이 이미 완료됐으면 바로 클라이언트에 데이터를 송신하고, 구독이 완료되지 않으면 이벤트 큐에 데이터를 저장해둠
+- 최종적으로 채팅방 ID를 통해 세션의 구독 여부를 추적 후, 구독이 완료되면 클라이언트로 데이터 전파하는 순서를 유지시킴
+- 구독이 종료되면 `SessionDisconnectEvent`를 통해 세션 ID를 추출해서 이벤트 큐에 저장된 세션 ID 및 매핑된 채팅방 ID 삭제 처리
+- 문제 해결
+
+<p align="center">
+  <img width="60%" alt="사용자별 읽지 않은 메세지 중복 처리" src="https://github.com/user-attachments/assets/a9edef5e-1017-4bbc-b81a-daf664067d07">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">이벤트 리스너 기반 앱 레벨의 이벤트 큐 구축</p>
+</div>
