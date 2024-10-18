@@ -583,9 +583,195 @@ public class DistributedLockFacade {
 ### 3. 클라이언트 레벨 구독 종료 & 서버 레벨 구독 유지 상황에서의 채팅 메세지 보존
 
 #### ❓ 문제 상황
+
+- 채팅 애플리케이션의 보편적인 기능 중 하나인 **읽지 않은 메세지** 확인 기능 구현을 구상
+- 이를 위해 채팅과 관련된 로직으로 **구독과 접속**을 분리해서 생각
+- 구독 메타데이터는 전술한 RDBMS로 관리하고 접속 세부 데이터는 실시간 업데이트가 유리한 **NoSQL**로 관리
+- 구현 시점에서는 접속과 메세지를 같이 관리하는 방향으로 구상
+
+<p align="center">
+  <img width="60%" alt="초기 메세지 관리" src="https://github.com/user-attachments/assets/c77358f0-b926-4ff6-a5a7-c793858617b0">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">접속 & 메세지 관리 플로우</p>
+</div>
+
 #### ❗ 문제 발생
+
+- 접속과 메세지의 강한 결합으로 인해 NoSQL에서의 관리가 매우 복잡해짐
+- 실시간 접속 관리를 **Redis**에서 맡은 상황에서 **MongoDB** 역시 접속 관리를 같이 도맡으면서 읽지 않은 메세지 보관 중복 처리
+- NoSQL 내에서도, 심지어 NoSQL과 RDBMS의 **책임 분리가 희석**되면서 상호 서비스 의존성이 강하게 잡힘
+
+<p align="center">
+  <img width="60%" alt="스크린샷 2024-10-18 오후 10 48 30" src="https://github.com/user-attachments/assets/6e01c7f6-7949-4fe2-9ee1-ac2df009c73e">
+</p>
+<p align="center">
+  <img width="60%" alt="스크린샷 2024-10-18 오후 10 57 58" src="https://github.com/user-attachments/assets/b8cc47ad-696a-4d11-b255-17245f26310a">
+</p>
+<p align="center">
+  <img width="60%" alt="상당히 지저분, noSQL에 의존하는 엔티티 값들" src="https://github.com/user-attachments/assets/3715ec1a-a8ea-45ac-8957-56bd6f0efd49">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">NoSQL & RDBMS 책임 분리 희석 문제 발생</p>
+</div>
+
+- 뿐만 아니라, 사용자별로 접속 관리가 이뤄지고 접속과 메세지를 결합한 아키텍처를 구상함으로 인해 사용자별로 읽지 않은 메세지 처리가 이뤄짐
+- 자연스럽게 트래픽이 몰리게 되면 중복된 데이터를 관리하면서 리소스 낭비가 심해지고 로직의 중복 수행이 많아질 것으로 예상
+
+<p align="center">
+  <img width="60%" alt="사용자별 읽지 않은 메세지 중복 처리" src="https://github.com/user-attachments/assets/d1210ff8-4f27-4ec3-be52-dc86e2dc9bdc">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">사용자별 읽지 않은 메세지 중복 처리</p>
+</div>
+
 #### 💬 문제 파악
+
+- 당시의 문제는 **Polyglot Persistence** 패턴을 준수하지 않았던 것
+- MSA에 있어 각 서비스가 독립적이라는 개념은, 데이터베이스 레벨까지 포함되어야 함
+
+<p align="center">
+  <img width="60%" alt="사용자별 읽지 않은 메세지 중복 처리" src="https://github.com/user-attachments/assets/1ec3a87e-78f4-4595-86ed-3a0ba275373c">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">이커머스 플랫폼을 예시로 한 Polyglot Persistence</p>
+</div>
+
+- 기능 구현 당시, 인스턴스 간 상황 공유 수단을 NoSQL에 최대한 위임시키면서 데이터 정합성을 처리하려고 함
+- 해당 문제를 파악 후, 데이터베이스 레벨의 격리를 구축하며 인스턴스 간 상호 데이터 송수신을 위한 **GraphQL** 도입 결정
+- 상대적으로 REST API 호출에 비해 유연성과 효율성을 챙길 수 있음
+
+| 특성                 | REST API                                      | GraphQL                                       |
+|----------------------|-----------------------------------------------|-----------------------------------------------|
+| **데이터 페칭**       | 여러 엔드포인트로 다수 요청 필요                | 단일 요청으로 필요한 데이터만 정확히 페칭       |
+| **응답 크기**         | 고정된 응답 구조로 불필요한 데이터 포함 가능      | 필요한 필드만 선택하여 응답 크기 최소화         |
+| **네트워크 트래픽**   | 여러 요청으로 트래픽 증가 가능                  | 요청/응답 수 줄어들어 트래픽 감소 가능          |
+| **N+1 문제**         | 여러 번의 추가 요청으로 발생할 수 있음           | 단일 요청으로 N+1 문제 해결 가능 (DataLoader 사용 시) |
+| **오버페칭/언더페칭** | 불필요한 데이터 수신 or 필요한 데이터 부족         | 클라이언트가 정확히 필요한 데이터만 요청         |
+| **서버 부하**         | 여러 엔드포인트로 인한 서버 부하 가능              | 한 번의 복잡한 요청으로 서버 부하 가능성 있음   |
+
+
+<p align="center">
+  <img width="60%" alt="사용자별 읽지 않은 메세지 중복 처리" src="https://github.com/user-attachments/assets/6051c77a-596a-4438-bc2a-ef700b20a95e">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">아키텍처 변환 & Polyglot Persistence 실현</p>
+</div>
+
 #### 💡 문제 해결
+
+- 메세지의 중복 처리를 막기 위해, 메세지 처리의 중앙화를 위한 엔티티 작성
+- 메세지 인스턴스에서 PostgreSQL을 기반으로 관리 후, 필요한 인스턴스에서 GraphQL을 통한 조회
+
+```java
+// message instance
+
+@Getter
+@Entity
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@Table(name = "chat_message")
+public class ChatMessage {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "id")
+    private Long id;
+
+    @Column(name = "chat_id")
+    private String chatId;
+
+    @Column(name = "type")
+    private ChatMessageType type;
+
+    @Column(name = "usernmae")
+    private String username;
+
+    @Column(name = "message")
+    private String message;
+
+    @Column(name = "created")
+    private LocalDateTime createdAt;
+
+    public ChatMessage(ChatMessageDTO dto) {
+        this.chatId = dto.getChatId();
+        this.type = dto.getType();
+        this.username = dto.getUsername();
+        this.message = dto.getMessage();
+        this.createdAt = dto.getCreatedAt();
+    }
+}
+```
+
+<p align="center">
+  <img width="60%" alt="사용자별 읽지 않은 메세지 중복 처리" src="https://github.com/user-attachments/assets/5874834f-d991-47b2-9e9c-880dad27099d">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">채팅 메세지 RDBMS로 중앙 관리</p>
+</div>
+
+```graphql
+type ChatUserSubscription {
+    id: ID!
+    chatId: String!
+    email: String!
+}
+
+type GraphqlChatMessageDTO {
+    chatId: String!
+    type: ChatMessageType!
+    username: String!
+    message: String!
+    createdAt: String!
+}
+
+enum ChatMessageType {
+    ENTER
+    LEAVE
+    MESSAGE
+}
+
+type Query {
+    subscriptionsByEmail(email: String!): [ChatUserSubscription!]!
+    getChatMessages(chatId: String!, exitTime: String!): [GraphqlChatMessageDTO]
+}
+```
+
+- 읽지 않은 메세지의 조회 처리에 있어 사용자별로 조회 기준이 다를뿐, 내용은 동일하기 때문에 **퇴장 시간**을 기준으로 조회
+- 참여자 인스턴스에서 각 채팅방 별로 참여자의 접속 여부, 퇴장 시간을 map 자료구조로 MongoDB를 통해 관리
+
+<p align="center">
+  <img width="60%" alt="사용자별 읽지 않은 메세지 중복 처리" src="https://github.com/user-attachments/assets/fdc25389-055e-4b73-8082-a258c137d6c4">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">MongoDB를 통해 채팅방별 참여자 접속 및 퇴장 시간 관리</p>
+</div>
+
+- 퇴장 시간을 GraphQL을 통해 받아와 메세지 인스턴스에서 퇴장 시간부터 현재 시간까지의 메세지들을 일괄 조회
+- 접속하지 않은 시간 사이에 이뤄진 메세지 송수신이 곧 읽지 않은 메세지
+- 조회 속도의 향상을 위한 **네이티브 쿼리** 활용
+
+```java
+@Repository
+public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> {
+
+    // 네이티브 쿼리 적용
+    @Query(value = "SELECT * FROM chat_message WHERE chat_id = :chatId AND created >= :startTime AND created <= :endTime", nativeQuery = true)
+    List<ChatMessage> findMessagesByChatIdAndTimeRange(String chatId, LocalDateTime startTime, LocalDateTime endTime);
+}
+```
+
+- ws 프로토콜이 이뤄지는 메세지 인스턴스에서 읽지 않은 메세지를 GraphQL로 얻어와 채팅방 인스턴스에서 REST API를 통해 내보냄
+- 프로토콜 간 간섭 방지 목적을 위한 추가적인 조치
+- 문제 해결
+
+
+<p align="center">
+  <img width="60%" alt="사용자별 읽지 않은 메세지 중복 처리" src="https://github.com/user-attachments/assets/b933558b-cc18-4f1b-bc9d-408b80ec03b0">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">RDBMS & GraphQL 기반 읽지 않은 메세지 처리</p>
+</div>
+
 
 ### 4. 웹소켓 구독 이벤트와 레디스 메세지브로커 이벤트 순서 정립을 통한 데이터 소실 방지
 
