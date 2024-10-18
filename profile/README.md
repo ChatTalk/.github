@@ -83,9 +83,10 @@ HTTP, WebSocket 프로토콜에서의 로직 구현 및 **MSA** 기반 인프라
 ## 🏗️ Architecture
 <br/>
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/46d45f80-c5be-432d-9e51-d181b69dbfac" alt="architecture" width="700" height="647.5" align="center" />
+  <img src="https://github.com/user-attachments/assets/6e2977e3-9df9-4504-b64a-bc6b74956a03" alt="architecture" width="90%" align="center" />
 </p>
 <br />
+
 
 ## ✨ Features
 
