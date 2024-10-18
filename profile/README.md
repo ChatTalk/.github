@@ -330,9 +330,255 @@ private Mono<UserInfoDTO> checkRedisForUserInfo(String id) {
 ### 2. 채팅방 구독에 대한 트래픽이 몰리는 상황에서의 동시성 제어
 
 #### ❓ 문제 상황
+
+- 2차 리팩토링 전의 채팅방 구독 관리는 접속 관리와 더불어 **NoSQL(Redis, MongoDB)** 에서 책임
+- **polyglot persistence** 패턴 구현을 위해 **구독 관리를 RDBMS(PostgreSQL)** 에 넘기는 리팩토링 시행
+- 현재 구독자 수 필드를 채팅방 엔티티에 추가하고, 구독 이벤트 로직 내에서 필드의 업데이트 처리
+```java
+// chat instance
+
+@Getter
+@Setter
+@Entity
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@Table(name = "openchats")
+@EntityListeners(AuditingEntityListener.class)
+public class ChatRoom {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "id")
+    private Long id;
+
+    // ...
+
+    @Column(name = "personnel")
+    private Integer personnel;
+```
+```java
+// message instance
+
+@Slf4j(topic = "ChatMessageService")
+@Service
+@RequiredArgsConstructor
+public class ChatMessageService {
+
+    // ...
+
+    public void enter(ChatMessageDTO.Enter enter, @AuthenticationPrincipal UserDetailsImpl userDetails) {
+        String username = userDetails.getUsername();
+        String role = userDetails.getRole();
+
+        // ...
+
+        // GraphQL을 통해 chat instance에 있는 채팅방 엔티티 인스턴스 필드 업데이트
+        graphqlService.incrementPersonnel(enter.getChatId(), username, role);
+```
+
+
 #### ❗ 문제 발생
+
+- 메세지 인스턴스에서 GraphQL로 API 호출을 수행하면서 채팅 인스턴스에서의 현재 인원 업데이트 과정을 구현
+- 플로우는 아래와 같음
+
+<p align="center">
+  <img width="60%" alt="rdbms에 위임" src="https://github.com/user-attachments/assets/eccc890d-4bdb-4c01-8606-613ee5c4f986">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">현재 인원 업데이트 플로우</p>
+</div>
+
+<p align="center">
+  <img width="60%" alt="rdbms에 위임" src="https://github.com/user-attachments/assets/d3ab47e8-7020-4dd8-a04f-f18c3f37842d">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">PostgreSQL 테이블로 현재 인원 관리</p>
+</div>
+
+- NoSQL에서 RDBMS로 리팩토링을 하고 메세지 인스턴스에서 채팅 인스턴스로 구독 관리 책임을 분산시켜서 **JUnit** 기반으로 동시성 테스트 코드를 작성
+
+```java
+// 인메모리 데이터베이스 h2 기반 동시성 제어 테스트
+// 메모리 기반이기 떄문에 테스트 종료시, 자동 휘발됨(데이터베이스까지!)
+@Slf4j
+@SpringBootTest
+@ActiveProfiles("test")
+public class ConcurrencyTest {
+
+    @Autowired
+    private ChatRoomRepository chatRoomRepository;
+
+    @Autowired
+    private ChatGraphqlServiceImpl chatGraphqlService;
+
+    // ...
+
+    @BeforeEach
+    @DisplayName("임의의 채팅방 객체 생성")
+    void setUp() {
+        ChatRoomDTO dto = new ChatRoomDTO(TITLE, MAX_PERSONNEL);
+        ChatRoom chatRoom = new ChatRoom(dto, "openUser");
+
+        chatRoomRepository.save(chatRoom);
+    }
+
+    // ...
+
+    @Test
+    @DisplayName("트래픽이 몰리는 상황에서 정합성이 지켜지는지 테스트")
+    void testWithNoLock() throws InterruptedException {
+        // given & when...
+
+        // 스레드 풀 및 동시 시작 장치
+        ExecutorService executorService = Executors.newFixedThreadPool(CLIENT);
+        CountDownLatch countDownLatch = new CountDownLatch(CLIENT);
+
+        // 성공 결과를 담을 자료구조
+        List<GraphqlDTO> result = new ArrayList<>();
+
+        for (int i = 0; i < CLIENT; i++) {
+            executorService.submit(() -> {
+               try {
+                   GraphqlDTO success =
+                           chatGraphqlService
+                                   .incrementPersonnel(chatRoom.getId().toString());
+                   result.add(success);
+                   log.info("입장 성공!: {}", success);
+               } catch (Exception e) {
+                   log.error("입장 실패! : {}", e.getMessage());
+               } finally {
+                   countDownLatch.countDown(); // 카운트 감소
+               }
+            });
+        }
+
+        countDownLatch.await(); // 스레드 종료 대기
+        executorService.shutdown(); // 서비스 종료
+
+        // then
+        assertThat(result.size())
+                .describedAs("예상 인원 수: %d, 실제 인원 수: %d", MAX_PERSONNEL, result.size())
+                .isGreaterThan(MAX_PERSONNEL);
+    }
+```
+
+- 테스트 수행 환경은 **채팅방의 제한 인원 대비 트래픽이 몰리는 상황**으로 설정
+- 수행 결과 제한 인원보다 더 많은 스레드에서 입장 승인 처리 확인, 즉 **동시성 이슈 발생**
+
+<p align="center">
+  <img width="60%" alt="동시성이슈" src="https://github.com/user-attachments/assets/d1aef60a-8d91-4825-86c7-892088c82638">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">JUnit 테스트 코드로 동시성 이슈 발생 확인</p>
+</div>
+
+
 #### 💬 문제 파악
+
+- 처음 구독자 관리를 **Redis**로 했을 때는 싱글 스레드로 동작하는 Redis 특성상, 동시성 이슈가 발생하지 않았음
+- PostgreSQL, 즉 **RDBMS**에서 트래픽이 몰릴 경우 복수의 트랜잭션이 경합 발생, **커밋되지 않은 값을 기반으로 업데이트 로직 수행**
+
+```sql
+# A 트랜잭션이 조회 SQL문을 수행해서 제한인원의 여유를 확인
+SELECT personnel FROM openchat WHERE room_id = X;
+
+# A 트랜잭션이 업데이트 과정을 수행하기 바로 직전 B 트랜잭션이 조회 SQL문을 수행해서 제한인원의 여유를 확인
+SELECT personnel FROM openchat WHERE room_id = X;
+
+# A, B 트랜잭션 둘 다 업데이트 처리, 동시성 이슈 발생
+UPDATE openchat SET personnel = personnel + 1 WHERE room_id = X;
+```
+- Redis에서 동시성 이슈가 발생하지 않았던 이유는, Redis는 **싱글 스레드** 기반 동작 및 원자적 연산을 지원
+
+<p align="center">
+  <img width="60%" alt="원자적 연산" src="https://github.com/user-attachments/assets/af987755-3a74-4367-aaad-e83564d904db">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">Redis의 원자적 연산 중 하나인 INCR</p>
+</div>
+
+- 그렇지만 Redis로 회귀하는 것은 **데이터베이스의 사용 목적 및 역할별 분류라는 MSA의 취지**를 지키지 못하는 것
+- 리팩토링을 수행한 RDBMS 내에서 락을 걸어 동시성 제어를 수행하기로 결정
+
 #### 💡 문제 해결
+
+- 락을 구현할 수 있는 방법으로, **데이터베이스 레벨의 락**과 **외부 툴을 활용한 락** 구현 방법이 있음
+- PostgreSQL 레벨의 락과 Redis를 활용한 락에 대해 고민
+
+| **특징**                | **데이터베이스 레벨 락**                      | **외부 툴 락 (예: Redis)**               |
+|-----------------------|------------------------------------------|---------------------------------------|
+| **속도**               | 상대적으로 느릴 수 있음 (디스크 I/O 필요) | 매우 빠름 (메모리 기반)               |
+| **원자성**             | 트랜잭션을 통해 보장됨                     | 명령어 단위로 원자적 처리             |
+| **확장성**             | 수직적 확장 필요                          | 수평적 확장이 가능                    |
+| **복잡성**             | 데이터베이스 내에서 간단하게 관리 가능      | 별도의 로직 필요 (락 획득 및 해제)     |
+| **재사용성**           | 특정 데이터베이스에 종속됨                  | 다양한 시스템에서 재사용 가능          |
+| **지속성**             | 데이터베이스 트랜잭션과 함께 지속됨         | 데이터의 지속성은 설정에 따라 달라짐   |
+| **경합 조건**          | 다양한 격리 수준에서 동작                   | 원자적 명령으로 경합 조건 감소         |
+| **락 경량성**          | 보통 무겁고, 성능 저하 우려 있음             | 경량 락으로 빠른 경합 처리 가능         |
+| **다중 노드 지원**      | 복잡한 설정 필요                           | 기본적으로 다중 노드 지원               |
+| **유지 관리**           | 데이터베이스 내에서 관리                    | 별도의 툴과 인프라 관리 필요            |
+
+- 채팅 애플리케이션처럼 실시간 처리 속도를 우선순위로 봐야 하고 수평적 확장이 중요함
+- 인스턴스의 스케일링이 있을 때, **락의 공유**를 통한 경합 처리를 수행해야 함
+- 위의 사유로, **Redis를 활용한 분산 락 구현**을 통한 동시성 제어 결정
+- **Redisson 클라이언트 or Lettuce 클라이언트**에 대한 고민
+
+| **특징**            | **Redisson**                               | **Lettuce**                                |
+|-------------------|------------------------------------------|-------------------------------------------|
+| **사용 편의성**     | 고수준 API 제공, 쉽게 구현 가능            | 사용자가 원하는 대로 커스터마이징 필요       |
+| **기능**           | 분산 락, 큐, 캐시 등 다양한 데이터 구조 지원 | 비동기 및 반응형 API, 모듈형 설계          |
+| **자동 해제**       | 락 타임아웃 자동 관리                     | 명시적 해제를 위한 코드 필요                |
+| **비동기 처리**     | 비동기 지원 없음                          | 비동기 및 반응형 프로그래밍 지원            |
+| **성능**           | 성능이 우수하지만 비동기 처리에 비해 약간 느림 | 높은 성능과 낮은 지연 시간 제공             |
+| **유연성**         | 다양한 기능을 한 곳에서 지원              | 다양한 프로그래밍 패러다임 지원             |
+| **추천 사용 경우**  | 소규모 팀, 빠른 개발, 다양한 기능 필요시    | 고성능, 대규모 채팅 애플리케이션에 적합      |
+
+- 락의 자동 해제에 있어 기능 구현이 상대적으로 간편한 Redisson을 1차적으로 채택 후, 성능 한계가 다가올 때 Lettuce로 전환 결정
+- 락 기능을 제공하는 별도의 컴포넌트에, 현재 인원 증가 업데이트 메소드를 보유한 서비스를 의존성 주입
+
+```java
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class DistributedLockFacade {
+
+    private final RedissonClient redissonClient;
+    private final ChatGraphqlService chatGraphqlService;
+
+    public GraphqlDTO incrementPersonnel(String id) {
+
+        RLock lock = redissonClient.getLock(id);
+
+        try {
+            boolean available = lock.tryLock(10, 1, TimeUnit.SECONDS);
+
+            if (!available) {
+                log.error("락 획득 실패");
+                return null;
+            }
+
+            log.info("락 획득 성공");
+            return chatGraphqlService.incrementPersonnel(id);
+        } catch (InterruptedException e) {
+            log.error("락 획득 예외 발생: {}", e.getMessage());
+            throw new RuntimeException(e);
+        } finally {
+            log.info("락 잠금 해제");
+            lock.unlock();
+        }
+    }
+}
+```
+
+- 해당 코드로 GraphQL 호출 컨트롤러에 주입 후, 다시 JUnit 기반으로 테스트 수행 결과 동시성 제어 확인
+- 문제 해결
+
+<p align="center">
+  <img width="60%" alt="동시성 제어" src="https://github.com/user-attachments/assets/da5a2bce-dacc-43b4-88f1-5f535f394bff">
+</p>
+<div align="center"> 
+  <p style="font-size:12px; color:#808080;">Redisson 기반 분산 락 구현으로 동시성 제어</p>
+</div>
 
 ### 3. 클라이언트 레벨 구독 종료 & 서버 레벨 구독 유지 상황에서의 채팅 메세지 보존
 
@@ -341,7 +587,7 @@ private Mono<UserInfoDTO> checkRedisForUserInfo(String id) {
 #### 💬 문제 파악
 #### 💡 문제 해결
 
-### 4. 웹소켓 기반 이벤트 트리거와 별개의 웹소켓 구독 시점 어긋남으로 인한 데이터 소실 
+### 4. 웹소켓 구독 이벤트와 레디스 메세지브로커 이벤트 순서 정립을 통한 데이터 소실 방지
 
 #### ❓ 문제 상황
 #### ❗ 문제 발생
